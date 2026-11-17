@@ -1,100 +1,105 @@
 # work-log
 
-> Keep traceable evidence of what an agent actually did, and summarize outcomes and cost.
+把 Agent 做了什么留下可追溯的 JSONL 证据，并汇总结果与成本。
 
-An agent skill for recording engineering work as structured evidence. Every non-trivial task gets a JSONL log of *operation → observation → decision*; a Markdown view is regenerated from it, never hand-maintained.
+一个 Agent Skill。每个非平凡任务建一份 JSONL 日志，按操作、观察、决策逐条追加。Markdown 视图由 JSONL 生成，可以随时重建。
 
-The point is not a diary. It is an auditable record of **real tool calls, real exit codes and real output**, so that later claims of "it's fixed" can be checked against something.
+记录内容是真实的工具调用、退出码和输出，用来核对后续关于任务是否完成的说法。
 
-## Why JSONL is the source of truth
+## 为什么跨模型也能比
 
-Two copies of the same facts always drift. Here the JSONL run file is authoritative and the Markdown file is a rebuildable view (`render` regenerates it if it drifts).
+每条记录都带 `model` 字段，规则要求每个模型写自己的日志文件，不往其他模型的文件里追加。同一个任务族下，不同模型的记录自然分组，工具调用数、失败数和验证轮数可以横向比较。
 
-## Usage
+这是 [better-solution](https://github.com/jeremylinnnnn/better-solution) 做跨模型策略对比的数据基础。
 
-### Start a run
+## 以 JSONL 为准
+
+同一份事实存两份会分叉。这里 JSONL 是权威记录，Markdown 是可重建的视图，漂移时用 `render` 重新生成。
+
+## 使用
+
+### 建立 run
 
 ```bash
 node scripts/log.cjs init --root /abs/project --model Codex \
-  --task 'fix dependency conflict' --task-id stable-task-id \
+  --task '修复依赖冲突' --task-id stable-task-id \
   --task-family dependency-conflict \
   --source-group repository-and-issue-cluster
 ```
 
-Keep the returned `LOG_FILE`, `JSONL_FILE` and `RUN_ID`. One session allows exactly one run — repeated trials get their own session.
+记下返回的 `LOG_FILE`、`JSONL_FILE` 和 `RUN_ID`。一次 session 对应一个 run，重复试验另建 session。
 
-### Append a step
+### 追加一步
 
 ```bash
 node scripts/log.cjs append --file /abs/run.jsonl --model Codex \
-  --stage verify --tool exec_command --command 'npm test' \
+  --stage 验证 --tool exec_command --command 'npm test' \
   --exit-code 1 --check-id regression <<'EOF'
-**Operation**: ran the regression check.
-**Result (raw)**: exit_code=1; key error text preserved verbatim.
-**Reading**: the original problem is not resolved.
+**操作**：运行回归检查。
+**结果（原始）**：exit_code=1；保留关键报错原文。
+**解读**：原问题仍未解决。
 EOF
 ```
 
-Rules that matter:
+几条约定：
 
-- An unknown exit code is written as `null` — **never** as `0`.
-- Expected non-zero exits are declared with `--expected-exit-codes 0,1`.
-- `check_id` identifies one verification target; a recovery only counts when that same check passes again.
-- Operation, raw result and reading are written separately.
-- Long output is excerpted with an explicit truncation marker; full evidence goes to a separate file.
-- No secrets, tokens or private data, ever.
+- 退出码未知时写 `null`。
+- 预期非零退出用 `--expected-exit-codes 0,1` 声明。
+- `check_id` 标识同一个验证目标，原检查再次通过时才算恢复。
+- 操作、原始结果和解读分开写。
+- 长输出摘关键原文并标注截断，完整证据另存文件。
 
-### Finish
+### 结束
 
 ```bash
 node scripts/log.cjs finish --file /abs/run.jsonl --model Codex \
   --status success --task-family dependency-conflict
 ```
 
-Without an independent evaluator, finish honestly — self-reported success is not `verified`. With one, run `evaluate` first and hand its receipt to `finish`. Evaluator code, credentials and logs live outside the artifact under test, and the verification criteria may not be edited to make something pass.
+没有独立评估器时，`finish` 记录的是自述状态。有评估器时先运行 `evaluate`，把返回的 receipt 交给 `finish`。评估器代码、凭据和日志放在被测产物目录之外。
 
-### Summarize
+### 汇总
 
 ```bash
 node scripts/summarize.cjs --dir /abs/logs --cost tool_calls --json
 ```
 
-One cost unit per report; missing data is reported as unknown rather than silently converted. Token and duration figures only count when supplied by the client or executor — model estimates are tagged `self`.
+一份报告使用一种成本单位，缺失时报告未知。token 和耗时只计入客户端或执行器提供的数值，模型估计的部分标记为 `self`。
 
-## Requirements
+## 依赖
 
-Node.js 20+, no third-party dependencies.
+Node.js 20+，无第三方依赖。
 
-## Install
+## 安装
 
 ```bash
 git clone https://github.com/jeremylinnnnn/work-log.git \
   ~/.workbuddy-ai/skills/work-log
 ```
 
-For Claude Code, clone into `~/.claude/skills/work-log` instead.
+Claude Code 的安装路径是 `~/.claude/skills/work-log`。
 
-## Layout
+## 目录结构
 
 ```
-SKILL.md               entry point and recording rules
-references/cli.md      evaluator format
+SKILL.md               入口与记录规则
+references/cli.md      评估器格式
 scripts/log.cjs        init / append / finish / evaluate / render
-scripts/summarize.cjs  aggregate across runs
-scripts/core.cjs       shared storage layer
-agents/openai.yaml     agent metadata
+scripts/summarize.cjs  跨 run 汇总
+scripts/core.cjs       存储层
+agents/openai.yaml     Agent 元数据
 ```
 
-## Honest limits
+## 适用范围
 
-- A manual log can only measure calls that were recorded; it cannot prove nothing was missed.
-- Cross-task aggregation is for *finding candidates*, not for causal claims about a strategy.
-- Strict experiments need a pre-registered manifest from [better-solution](../better-solution); an ordinary log cannot detect runs that are missing entirely.
+- 手动日志覆盖已记录的调用，未记录的调用不计入统计。
+- 跨任务汇总用于发现候选策略，不构成因果证据。
+- 严格实验需要 [better-solution](https://github.com/jeremylinnnnn/better-solution) 的预登记 manifest。
 
-## Companion skill
+## 配套 skill
 
-[better-solution](https://github.com/jeremylinnnnn/better-solution) consumes these logs as its evidence base.
+[better-solution](https://github.com/jeremylinnnnn/better-solution) 把这些日志当作证据库。
 
-## License
+## 许可
 
-MIT — see [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。
