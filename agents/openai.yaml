@@ -1,0 +1,4 @@
+interface:
+  display_name: "Work Log"
+  short_description: "记录工程操作与独立评估，保留失败和成本，生成可追溯日志与汇总"
+  default_prompt: "使用 $work-log 记录这次工程任务的关键操作、原始证据和验证结果。"
